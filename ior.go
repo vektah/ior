@@ -13,6 +13,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"fmt"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -59,13 +62,17 @@ func reloadMiddleware(next http.Handler) http.Handler {
 		_, err, _ := once.Do("all", func() (interface{}, error) {
 			hash := getHash()
 			if !bytes.Equal(lastHash, hash) {
-				println("Change detected, recompiling")
+				start := time.Now()
+				if stop() {
+					fmt.Printf("\x1b[36mStopped in %s.\n\x1b[0m", time.Since(start).String())
+				}
+				start = time.Now()
 				err := install()
 				if err != nil {
 					return nil, err
 				}
 
-				println("Reloading")
+				fmt.Printf("\x1b[36mRebuilt in %s.\n\x1b[0m", time.Since(start).String())
 				err = reload()
 				if err != nil {
 					return nil, err

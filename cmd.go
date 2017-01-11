@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
-var currentCmd *exec.Cmd
+const escape = "\x1b"
+
+var cmd *exec.Cmd
 var currentCloser func()
 
 func install() error {
@@ -19,64 +23,108 @@ func install() error {
 		os.Mkdir(*bindir, 0755)
 	}
 
-	cmd, buf, closer, err := cmd("go", "install", "-v")
+	cmd := exec.Command("go", "install", "-v")
+	cmd.Env = append(os.Environ(), "GOBIN="+*bindir, "PORT="+*port)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	defer closer()
+	defer stdout.Close()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	defer stderr.Close()
+
+	b := &bytes.Buffer{}
+
+	go func() {
+		copyColor(os.Stdout, stdout)
+	}()
+
+	go func() {
+		copyColor(os.Stderr, io.TeeReader(stderr, b))
+	}()
 
 	err = cmd.Run()
-	if _, ok := err.(*exec.ExitError); ok && buf.Len() > 0 {
-		return errors.New(buf.String())
+	if _, ok := err.(*exec.ExitError); ok && b.Len() > 0 {
+		return errors.New(b.String())
 	}
 	return err
 }
 
-func cmd(name string, args ...string) (*exec.Cmd, *bytes.Buffer, func(), error) {
-	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), "GOBIN="+*bindir, "PORT="+*port)
+func copyColor(dst io.Writer, src io.Reader) error {
+	b := make([]byte, 4*1024)
+	var err error
+
+	for {
+		nr, er := src.Read(b)
+		if nr > 0 {
+			fmt.Fprint(dst, "\x1b[34m")
+			nw, ew := dst.Write(b[0:nr])
+			fmt.Fprint(dst, "\x1b[0m")
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er == io.EOF {
+			break
+		}
+		if er != nil {
+			err = er
+			break
+		}
+	}
+	return err
+}
+
+func stop() bool {
+	stopped := false
+	if cmd != nil {
+		cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Wait()
+		cmd = nil
+		stopped = true
+	}
+	if currentCloser != nil {
+		currentCloser()
+		currentCloser = nil
+	}
+
+	return stopped
+}
+
+func reload() error {
+	cmd = exec.Command(*binary, flag.Args()...)
+	cmd.Env = append(os.Environ(), "PORT="+*port)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, nil, err
+		return err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, nil, nil, err
+		return err
 	}
-
-	errbuf := &bytes.Buffer{}
+	currentCloser = func() {
+		stdout.Close()
+		stderr.Close()
+	}
 
 	go func() {
 		io.Copy(os.Stdout, stdout)
 	}()
 
 	go func() {
-		io.Copy(errbuf, io.TeeReader(stderr, os.Stderr))
+		io.Copy(os.Stderr, stderr)
 	}()
 
-	return cmd, errbuf, func() {
-		stdout.Close()
-		stderr.Close()
-	}, nil
-
-}
-
-func reload() error {
-	if currentCmd != nil {
-		currentCmd.Process.Kill()
-		_ = currentCmd.Wait()
-		currentCloser()
-	}
-
-	cmd, buf, closer, err := cmd(*binary, flag.Args()...)
-	if err != nil {
-		return err
-	}
-
 	err = cmd.Start()
-	if _, ok := err.(*exec.ExitError); ok && buf.Len() > 0 {
-		return errors.New(buf.String())
-	} else if err != nil {
+	if err != nil {
 		return err
 	}
 
@@ -89,9 +137,6 @@ func reload() error {
 
 		time.Sleep(15 * time.Millisecond)
 	}
-
-	currentCmd = cmd
-	currentCloser = closer
 
 	return nil
 }
