@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,16 +10,50 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
-const escape = "\x1b"
+type Daemon struct {
+	cmd           *exec.Cmd
+	currentCloser func()
+	lastHash      []byte
+	once          singleflight.Group
+}
 
-var cmd *exec.Cmd
-var currentCloser func()
+func (d *Daemon) Refresh() error {
+	_, err, _ := d.once.Do("reload", func() (interface{}, error) {
+		hash := getHash()
+		if !bytes.Equal(d.lastHash, hash) {
+			start := time.Now()
+			if d.stop() {
+				fmt.Printf("\x1b[36mStopped in %s.\n\x1b[0m", time.Since(start).String())
+			}
+			start = time.Now()
+			err := d.install()
+			if err != nil {
+				return nil, err
+			}
 
-func install() error {
+			fmt.Printf("\x1b[36mRebuilt in %s.\n\x1b[0m", time.Since(start).String())
+			err = d.reload()
+			if err != nil {
+				return nil, err
+			}
+			d.lastHash = hash
+		}
+
+		return nil, nil
+	})
+
+	return err
+}
+
+func (d *Daemon) install() error {
 	if _, err := os.Stat(*bindir); os.IsNotExist(err) {
 		os.Mkdir(*bindir, 0755)
 	}
@@ -83,34 +118,34 @@ func copyColor(dst io.Writer, src io.Reader) error {
 	return err
 }
 
-func stop() bool {
+func (d *Daemon) stop() bool {
 	stopped := false
-	if cmd != nil {
-		cmd.Process.Signal(syscall.SIGTERM)
-		_ = cmd.Wait()
-		cmd = nil
+	if d.cmd != nil {
+		d.cmd.Process.Signal(syscall.SIGTERM)
+		_ = d.cmd.Wait()
+		d.cmd = nil
 		stopped = true
 	}
-	if currentCloser != nil {
-		currentCloser()
-		currentCloser = nil
+	if d.currentCloser != nil {
+		d.currentCloser()
+		d.currentCloser = nil
 	}
 
 	return stopped
 }
 
-func reload() error {
-	cmd = exec.Command(*binary, flag.Args()...)
-	cmd.Env = append(os.Environ(), "PORT="+*port)
-	stdout, err := cmd.StdoutPipe()
+func (d *Daemon) reload() error {
+	d.cmd = exec.Command(*binary, flag.Args()...)
+	d.cmd.Env = append(os.Environ(), "PORT="+*port)
+	stdout, err := d.cmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, err := d.cmd.StderrPipe()
 	if err != nil {
 		return err
 	}
-	currentCloser = func() {
+	d.currentCloser = func() {
 		stdout.Close()
 		stderr.Close()
 	}
@@ -123,7 +158,7 @@ func reload() error {
 		io.Copy(os.Stderr, stderr)
 	}()
 
-	err = cmd.Start()
+	err = d.cmd.Start()
 	if err != nil {
 		return err
 	}
@@ -139,4 +174,35 @@ func reload() error {
 	}
 
 	return nil
+}
+
+func getHash() []byte {
+	s := sha1.New()
+	filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if info.IsDir() {
+			if info.Name() != "." && strings.HasPrefix(info.Name(), ".") {
+				return filepath.SkipDir
+			}
+			for _, ignoreDir := range ignoreDirs {
+				if info.Name() == ignoreDir {
+					return filepath.SkipDir
+				}
+			}
+		}
+
+		if strings.HasSuffix(info.Name(), ".go") {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(s, f)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	return s.Sum([]byte{})
 }

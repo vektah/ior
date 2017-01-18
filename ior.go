@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"crypto/sha1"
 	"flag"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -12,16 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
-	"time"
-
-	"fmt"
-
-	"golang.org/x/sync/singleflight"
 )
 
 var ignoreDirs []string = []string{"vendor", "node_modules", "bundler", "public", "assets"}
-var once = singleflight.Group{}
 
 var bindir = flag.String("bindir", mustCwd()+"/bin", "The location to put the binary")
 var binary = flag.String("binary", "", "The binary to run after installing")
@@ -52,36 +42,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Print(http.ListenAndServe(*listen, reloadMiddleware(httputil.NewSingleHostReverseProxy(rpURL))))
+	d := &Daemon{}
+	d.Refresh()
+
+	log.Print(http.ListenAndServe(*listen, reloadMiddleware(d, httputil.NewSingleHostReverseProxy(rpURL))))
 }
 
-func reloadMiddleware(next http.Handler) http.Handler {
-	var lastHash []byte
-
+func reloadMiddleware(d *Daemon, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, err, _ := once.Do("all", func() (interface{}, error) {
-			hash := getHash()
-			if !bytes.Equal(lastHash, hash) {
-				start := time.Now()
-				if stop() {
-					fmt.Printf("\x1b[36mStopped in %s.\n\x1b[0m", time.Since(start).String())
-				}
-				start = time.Now()
-				err := install()
-				if err != nil {
-					return nil, err
-				}
-
-				fmt.Printf("\x1b[36mRebuilt in %s.\n\x1b[0m", time.Since(start).String())
-				err = reload()
-				if err != nil {
-					return nil, err
-				}
-				lastHash = hash
-			}
-
-			return nil, nil
-		})
+		err := d.Refresh()
 
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -89,35 +58,4 @@ func reloadMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func getHash() []byte {
-	s := sha1.New()
-	filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
-			if info.Name() != "." && strings.HasPrefix(info.Name(), ".") {
-				return filepath.SkipDir
-			}
-			for _, ignoreDir := range ignoreDirs {
-				if info.Name() == ignoreDir {
-					return filepath.SkipDir
-				}
-			}
-		}
-
-		if strings.HasSuffix(info.Name(), ".go") {
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			_, err = io.Copy(s, f)
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-	return s.Sum([]byte{})
 }
