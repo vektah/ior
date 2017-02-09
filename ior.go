@@ -54,6 +54,7 @@ func reloadMiddleware(d *Daemon, next http.Handler) http.Handler {
 
 		if err != nil {
 			http.Error(w, err.Error(), 400)
+			return
 		}
 
 		next.ServeHTTP(w, r)

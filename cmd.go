@@ -45,6 +45,8 @@ func (d *Daemon) Refresh() error {
 				return nil, err
 			}
 			d.lastHash = hash
+		} else if !d.running() {
+			d.reload()
 		}
 
 		return nil, nil
@@ -132,6 +134,10 @@ func (d *Daemon) stop() bool {
 	}
 
 	return stopped
+}
+
+func (d *Daemon) running() bool {
+	return d.cmd != nil
 }
 
 func (d *Daemon) reload() error {
