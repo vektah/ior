@@ -1,3 +1,8 @@
+ior
+====
+
+![ior](http://i.imgur.com/yxN7Hty.jpg)
+
 ### usage
 
 ```
@@ -6,8 +11,6 @@ go get github.com/vektah/ior
 cd $GOPATH/src/github.com/you/yourapp
 ior -listen ":1234" -- [args passed through to your app]
 ```
-
-![ior](http://i.imgur.com/yxN7Hty.jpg)
 
 ### What it does
 
