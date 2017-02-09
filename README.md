@@ -7,6 +7,8 @@ cd $GOPATH/src/github.com/you/yourapp
 ior -listen ":1234" -- [args passed through to your app]
 ```
 
+![ior](http://i.imgur.com/yxN7Hty.jpg)
+
 ### What it does
 
 1. Wait for a request.
