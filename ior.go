@@ -4,7 +4,6 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -45,7 +44,7 @@ func main() {
 	d := &Daemon{}
 	d.Refresh()
 
-	log.Print(http.ListenAndServe(*listen, reloadMiddleware(d, httputil.NewSingleHostReverseProxy(rpURL))))
+	log.Print(http.ListenAndServe(*listen, reloadMiddleware(d, NewForwarder(rpURL))))
 }
 
 func reloadMiddleware(d *Daemon, next http.Handler) http.Handler {
