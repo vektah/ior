@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 
 	"github.com/yhat/wsutil"
 )
@@ -14,8 +15,10 @@ type Forwarder struct {
 }
 
 func NewForwarder(rpURL *url.URL) *Forwarder {
+	shrp := httputil.NewSingleHostReverseProxy(rpURL)
+	shrp.FlushInterval = 200 * time.Millisecond
 	return &Forwarder{
-		httpForwarder:      httputil.NewSingleHostReverseProxy(rpURL),
+		httpForwarder:      shrp,
 		websocketForwarder: wsutil.NewSingleHostReverseProxy(rpURL),
 	}
 }
