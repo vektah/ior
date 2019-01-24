@@ -23,6 +23,7 @@ type Daemon struct {
 	currentCloser func()
 	lastHash      []byte
 	once          singleflight.Group
+	race          bool
 }
 
 func (d *Daemon) Refresh() error {
@@ -61,6 +62,9 @@ func (d *Daemon) install() error {
 	}
 
 	cmd := exec.Command("go", "install", "-v")
+	if d.race {
+		cmd.Args = append(cmd.Args, "-race")
+	}
 	cmd.Env = append(os.Environ(), "GOBIN="+*bindir, "PORT="+*port)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
