@@ -17,6 +17,7 @@ var binary = flag.String("binary", "", "The binary to run after installing")
 var port = flag.String("port", "3000", "The port the app should listen on, will set PORT")
 var upstream = flag.String("upstream", "", "Where to connect to access the app")
 var listen = flag.String("listen", ":3030", "Where to listen")
+var race = flag.Bool("race", false, "Build binary with -race instrumentation")
 
 func mustCwd() string {
 	wd, err := os.Getwd()
@@ -41,7 +42,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	d := &Daemon{}
+	d := &Daemon{
+		race: *race,
+	}
 	d.Refresh()
 
 	log.Print(http.ListenAndServe(*listen, reloadMiddleware(d, NewForwarder(rpURL))))
